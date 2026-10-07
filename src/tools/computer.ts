@@ -6,40 +6,13 @@ import {
 	Point,
 	screen,
 	Button,
-	imageToJimp,
 } from '@nut-tree-fork/nut-js';
 import {execFileSync} from 'node:child_process';
-import {readFileSync, unlinkSync} from 'node:fs';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import Jimp from 'jimp';
 import sharp from 'sharp';
 import {toKeys} from '../utils/xdotoolStringToKeys.js';
 import {jsonResult} from '../utils/response.js';
-
-/**
- * Grab the screen, falling back to the macOS `screencapture` CLI if nut-js fails
- * (e.g. on macOS 26+ where CGDisplayCreateImageForRect was removed).
- */
-async function grabScreen(): Promise<ReturnType<typeof imageToJimp>> {
-	try {
-		return imageToJimp(await screen.grab());
-	} catch {
-		// Fallback: use screencapture CLI (macOS only)
-		const tmpPath = join(tmpdir(), `computer-use-mcp-${Date.now()}.png`);
-		try {
-			execFileSync('screencapture', ['-x', tmpPath]);
-			const buffer = readFileSync(tmpPath);
-			return (await Jimp.read(buffer)) as unknown as ReturnType<typeof imageToJimp>;
-		} finally {
-			try {
-				unlinkSync(tmpPath);
-			} catch {
-				/* ignore cleanup errors */
-			}
-		}
-	}
-}
+import {grabScreen} from '../utils/screenshot.js';
+import {getApiImageSize, getSizeToApiScale} from '../utils/scaling.js';
 
 // Configure nut-js
 mouse.config.autoDelayMs = 100;
@@ -84,30 +57,6 @@ function xdotoolType(text: string): void {
 	], {
 		env: {...process.env, DISPLAY: process.env.DISPLAY || ':1'},
 	});
-}
-
-// The Claude API automatically downsamples images larger than ~1.15MP or 1568px on the long edge.
-// We already downsampled screenshots to fit these limits and reported the original screen
-// dimensions via display_width_px/display_height_px, but Claude wasn't correctly using those
-// reported dimensions - it was using coordinates from the downsampled image space directly.
-// As a workaround, we now report the actual image dimensions and scale Claude's coordinates
-// back up to logical screen coordinates.
-// See: https://docs.anthropic.com/en/docs/build-with-claude/vision#evaluate-image-size
-const maxLongEdge = 1568;
-const maxPixels = 1.15 * 1024 * 1024; // 1.15 megapixels
-
-/**
- * Calculate the scale factor to downsample an image to fit API limits.
- * Returns a value <= 1 representing how much to shrink the image.
- */
-function getSizeToApiScale(width: number, height: number): number {
-	const longEdge = Math.max(width, height);
-	const totalPixels = width * height;
-
-	const longEdgeScale = longEdge > maxLongEdge ? maxLongEdge / longEdge : 1;
-	const pixelScale = totalPixels > maxPixels ? Math.sqrt(maxPixels / totalPixels) : 1;
-
-	return Math.min(longEdgeScale, pixelScale);
 }
 
 /**
@@ -353,16 +302,13 @@ export function registerComputer(server: McpServer): void {
 					// Get cursor position in logical coordinates
 					const cursorPos = await mouse.getPosition();
 
-					// Capture the entire screen (may be at Retina resolution)
+					// Capture the entire screen (may be at physical resolution, e.g. Retina or Windows display scaling)
 					const image = await grabScreen();
 
-					// Then resize to fit within API limits
-					const apiScaleFactor = getSizeToApiScale(image.getWidth(), image.getHeight());
-					if (apiScaleFactor < 1) {
-						image.resize(
-							Math.floor(image.getWidth() * apiScaleFactor),
-							Math.floor(image.getHeight() * apiScaleFactor),
-						);
+					// Then resize into API image space, so its pixels line up with the coordinates we scale back up
+					const apiSize = getApiImageSize(await screen.width(), await screen.height());
+					if (image.getWidth() !== apiSize.width || image.getHeight() !== apiSize.height) {
+						image.resize(apiSize.width, apiSize.height);
 					}
 
 					// Calculate cursor position in API image coordinates
