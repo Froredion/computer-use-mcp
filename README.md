@@ -2,6 +2,11 @@
 
 💻 A Model Context Protocol server for Claude to control your computer. This is very similar to [computer use](https://docs.anthropic.com/en/docs/build-with-claude/computer-use), but easy to set up and use locally.
 
+> [!NOTE]
+> This is a fork of [domdomegg/computer-use-mcp](https://github.com/domdomegg/computer-use-mcp) with fixes for Windows:
+> - **Screenshots fall back to a native Windows capture.** Upstream's only fallback when nut.js can't grab the screen is macOS's `screencapture`, so on Windows any capture failure surfaced as a confusing `spawnSync screencapture ENOENT`. Windows now falls back to PowerShell + System.Drawing, and if that fails too the error says why.
+> - **Clicks line up under Windows display scaling.** Screenshots are sized from the logical screen size rather than the physical capture, which previously put clicks and the cursor crosshair in the wrong place on setups like a 1920x1080 display at 150% scaling.
+
 Here's Claude Haiku 4.5 changing my desktop background (4x speed):
 
 https://github.com/user-attachments/assets/cd0bc190-52c4-49db-b3bc-4b8a74544789
@@ -11,7 +16,35 @@ https://github.com/user-attachments/assets/cd0bc190-52c4-49db-b3bc-4b8a74544789
 
 ## Installation
 
-Follow the instructions on [install-mcp](https://adamjones.me/install-mcp/?config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImNvbXB1dGVyLXVzZS1tY3AiXSwibmFtZSI6ImNvbXB1dGVyLXVzZSJ9), which generates the right config for your MCP client (Claude Code, Claude Desktop, Cursor, Cline, VS Code, and more).
+This fork isn't published to npm (`npx computer-use-mcp` installs the upstream package), so build it from source:
+
+```sh
+git clone https://github.com/Froredion/computer-use-mcp.git
+cd computer-use-mcp
+npm install
+npm run build
+```
+
+Then point your MCP client at `dist/main.js`. For Claude Code:
+
+```sh
+claude mcp add computer-use -- node /absolute/path/to/computer-use-mcp/dist/main.js
+```
+
+For Claude Desktop, Cursor and other clients that use JSON config:
+
+```json
+{
+  "mcpServers": {
+    "computer-use": {
+      "command": "node",
+      "args": ["C:\\absolute\\path\\to\\computer-use-mcp\\dist\\main.js"]
+    }
+  }
+}
+```
+
+Tagged releases also attach a `computer-use-mcp.mcpb` bundle, which Claude Desktop can install directly.
 
 ## Tips
 
@@ -46,4 +79,6 @@ To release:
 
 1. Use `npm version <major | minor | patch>` to bump the version
 2. Run `git push --follow-tags` to push with tags
-3. Wait for GitHub Actions to publish to the NPM registry.
+3. Wait for GitHub Actions to create a GitHub Release with the MCPB bundle attached.
+
+To pull in upstream changes: `git fetch upstream && git merge upstream/master`.
